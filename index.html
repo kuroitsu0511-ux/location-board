@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Location Message Board</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        dark: '#0f1115',
+                        darkSurface: '#161922',
+                        primary: '#3b82f6',
+                        danger: '#ef4444',
+                    }
+                }
+            }
+        }
+    </script>
+
+    <!-- Leaflet CSS & JS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <!-- Leaflet MarkerCluster -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+    <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <style>
+        body, html { margin: 0; padding: 0; height: 100%; overflow: hidden; background-color: #0f1115; }
+        #map { height: 100vh; width: 100vw; z-index: 1; }
+        .ui-layer { z-index: 1000; }
+        .modal-layer { z-index: 2000; }
+
+        .leaflet-popup-content-wrapper, .leaflet-popup-tip {
+            background-color: #161922;
+            color: #f3f4f6;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+        }
+        .leaflet-popup-close-button { color: #9ca3af !important; }
+
+        .marker-cluster-small, .marker-cluster-medium, .marker-cluster-large {
+            background-color: rgba(59, 130, 246, 0.4) !important;
+        }
+        .marker-cluster-small div, .marker-cluster-medium div, .marker-cluster-large div {
+            background-color: rgba(59, 130, 246, 0.9) !important;
+            color: white !important;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body class="dark text-gray-100 font-sans antialiased">
+
+    <!-- Map -->
+    <div id="map"></div>
+
+    <!-- Top Left Controls -->
+    <div class="ui-layer absolute top-4 left-4 flex space-x-2">
+        <button onclick="toggleSidebar()" class="bg-darkSurface/90 backdrop-blur border border-gray-800 p-3 rounded-2xl shadow-xl text-white hover:bg-gray-800 transition" title="投稿一覧">
+            <i class="fas fa-bars"></i>
+        </button>
+        <button onclick="openAdminLoginModal()" class="bg-darkSurface/90 backdrop-blur border border-gray-800 p-3 rounded-2xl shadow-xl text-gray-400 hover:text-white hover:bg-gray-800 transition" title="管理画面">
+            <i class="fas fa-lock"></i>
+        </button>
+    </div>
+
+    <!-- Sidebar / Drawer -->
+    <div id="sidebar" class="ui-layer absolute top-0 left-0 w-80 h-full bg-darkSurface/95 backdrop-blur-md border-r border-gray-800 shadow-2xl transform -translate-x-full transition-transform duration-300 flex flex-col">
+        <div class="p-5 border-b border-gray-800 flex justify-between items-center bg-dark/50">
+            <h2 class="text-base font-bold text-white flex items-center">
+                <i class="fas fa-stream mr-2 text-primary"></i>タイムライン
+            </h2>
+            <button onclick="toggleSidebar()" class="text-gray-400 hover:text-white">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        <div id="post-list" class="flex-1 overflow-y-auto p-3 space-y-3"></div>
+    </div>
+
+    <!-- Bottom Right Controls -->
+    <div class="ui-layer absolute bottom-6 right-6 flex flex-col items-center space-y-3">
+        <button onclick="focusCurrentLocation()" class="bg-darkSurface/90 backdrop-blur border border-gray-800 p-3.5 rounded-2xl shadow-xl text-white hover:bg-gray-800 transition" title="現在地へ移動">
+            <i class="fas fa-crosshairs"></i>
+        </button>
+        <button onclick="openPostModal('current')" class="bg-primary hover:bg-blue-600 p-4 rounded-2xl shadow-xl text-white transition transform hover:scale-105 flex items-center justify-center" title="現在地に投稿">
+            <i class="fas fa-plus fa-lg"></i>
+        </button>
+    </div>
+
+    <!-- Post Modal -->
+    <div id="post-modal" class="modal-layer fixed inset-0 bg-black/70 backdrop-blur-sm hidden flex justify-center items-center p-4">
+        <div class="bg-darkSurface w-full max-w-md rounded-3xl shadow-2xl overflow-hidden border border-gray-800">
+            <div class="p-5 border-b border-gray-800 flex justify-between items-center">
+                <h3 class="text-lg font-bold">メッセージを投稿</h3>
+                <button onclick="closePostModal()" class="text-gray-400 hover:text-white"><i class="fas fa-times"></i></button>
+            </div>
+            <form id="post-form" class="p-6 space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold uppercase tracking-wider text-gray-400 mb-1.5">ユーザー名 (任意)</label>
+                    <input type="text" id="username" placeholder="名無しさん" class="w-full bg-dark border border-gray-800 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-primary transition">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold uppercase tracking-wider text-gray-400 mb-1.5">メッセージ <span class="text-primary">*</span></label>
+                    <textarea id="message" required placeholder="いま何してる？" rows="3" class="w-full bg-dark border border-gray-800 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-primary transition"></textarea>
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold uppercase tracking-wider text-gray-400 mb-1.5">位置情報のプライバシー設定</label>
+                    <select id="precision" class="w-full bg-dark border border-gray-800 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-primary transition">
+                        <option value="exact">正確な位置 (ピッタシ)</option>
+                        <option value="approximate_1km" selected>おおよそのエリア (半径1〜2km前後)</option>
+                        <option value="approximate_3km">広めのエリア (半径3〜5km前後)</option>
+                    </select>
+                </div>
+                <button type="submit" class="w-full bg-primary hover:bg-blue-600 text-white font-bold py-3.5 px-4 rounded-xl transition text-sm shadow-lg shadow-primary/25 mt-2">
+                    シェアする
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Admin Login Modal -->
+    <div id="admin-login-modal" class="modal-layer fixed inset-0 bg-black/70 backdrop-blur-sm hidden flex justify-center items-center p-4">
+        <div class="bg-darkSurface w-full max-w-sm rounded-3xl shadow-2xl overflow-hidden border border-gray-800">
+            <div class="p-5 border-b border-gray-800 flex justify-between items-center">
+                <h3 class="text-lg font-bold flex items-center"><i class="fas fa-lock mr-2 text-yellow-500"></i>管理者ログイン</h3>
+                <button onclick="closeAdminLoginModal()" class="text-gray-400 hover:text-white"><i class="fas fa-times"></i></button>
+            </div>
+            <form id="admin-login-form" class="p-6 space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold uppercase tracking-wider text-gray-400 mb-1.5">パスワード</label>
+                    <input type="password" id="admin-password" required placeholder="••••••••" class="w-full bg-dark border border-gray-800 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-primary transition">
+                </div>
+                <button type="submit" class="w-full bg-yellow-600 hover:bg-yellow-700 text-white font-bold py-3.5 px-4 rounded-xl transition text-sm shadow-lg shadow-yellow-600/25">
+                    ログイン
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Admin Dashboard Modal -->
+    <div id="admin-modal" class="modal-layer fixed inset-0 bg-black/80 backdrop-blur-sm hidden flex justify-center items-center p-4">
+        <div class="bg-darkSurface w-full max-w-2xl h-[75vh] rounded-3xl shadow-2xl overflow-hidden border border-gray-800 flex flex-col">
+            <div class="p-5 border-b border-gray-800 flex justify-between items-center bg-dark/50">
+                <h3 class="text-lg font-bold text-yellow-500 flex items-center"><i class="fas fa-shield-alt mr-2"></i>管理ダッシュボード</h3>
+                <button onclick="closeAdminModal()" class="text-gray-400 hover:text-white"><i class="fas fa-times"></i></button>
+            </div>
+            <div id="admin-post-list" class="flex-1 overflow-y-auto p-4 space-y-3"></div>
+        </div>
+    </div>
+
+    <script>
+        let map;
+        let markerCluster;
+        let posts = [];
+        let tempLatLng = null;
+        let currentLocationMarker = null;
+        let currentLocationAccuracyCircle = null;
+
+        document.addEventListener('DOMContentLoaded', () => {
+            initMap();
+            updateUI();
+        });
+
+        function initMap() {
+            // 初期位置（GPS取得までのフォールバックとして渋谷を設定）
+            map = L.map('map', { zoomControl: false }).setView([35.6580, 139.7016], 15);
+            
+            // CARTO ダークマップタイル（APIキー組み込み済み）
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key=cb1_3i4o_1_1bba2c9981a1808fd07c1ccc', {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+                subdomains: 'abcd',
+                maxZoom: 19
+            }).addTo(map);
+
+            L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+            markerCluster = L.markerClusterGroup({ disableClusteringAtZoom: 18, spiderfyOnMaxZoom: true });
+            map.addLayer(markerCluster);
+
+            map.on('click', function(e) {
+                tempLatLng = e.latlng;
+                openPostModal('map');
+            });
+
+            // アプリ起動時の現在地自動取得＆常時追従を開始（初回ズームあり）
+            startLocationTracking(true);
+        }
+
+        // 現在地の常時追従と表示
+        function startLocationTracking(isFirstTime = false) {
+            if (!navigator.geolocation) {
+                if (isFirstTime) alert("お使いのブラウザは位置情報に対応していません。");
+                return;
+            }
+
+            navigator.geolocation.watchPosition(
+                (pos) => {
+                    const lat = pos.coords.latitude;
+                    const lng = pos.coords.longitude;
+                    const accuracy = pos.coords.accuracy;
+                    const latLng = [lat, lng];
+
+                    // 現在地マーカー（光る青いドット）の更新
+                    if (!currentLocationMarker) {
+                        const pulseIcon = L.divIcon({
+                            className: '',
+                            html: `<div class="w-5 h-5 bg-primary border-2 border-white rounded-full shadow-lg shadow-primary/50 animate-ping absolute"></div>
+                                   <div class="w-5 h-5 bg-primary border-2 border-white rounded-full shadow-lg shadow-primary/50 relative flex items-center justify-center">
+                                       <div class="w-2 h-2 bg-white rounded-full"></div>
+                                   </div>`,
+                            iconSize: [20, 20],
+                            iconAnchor: [10, 10]
+                        });
+                        currentLocationMarker = L.marker(latLng, { icon: pulseIcon, zIndexOffset: 1000 }).addTo(map);
+                        currentLocationMarker.bindPopup("いまここ（あなたの現在地）");
+                    } else {
+                        currentLocationMarker.setLatLng(latLng);
+                    }
+
+                    // 精度円の更新
+                    if (!currentLocationAccuracyCircle) {
+                        currentLocationAccuracyCircle = L.circle(latLng, {
+                            radius: accuracy,
+                            color: '#3b82f6',
+                            fillColor: '#3b82f6',
+                            fillOpacity: 0.15,
+                            weight: 1
+                        }).addTo(map);
+                    } else {
+                        currentLocationAccuracyCircle.setLatLng(latLng);
+                        currentLocationAccuracyCircle.setRadius(accuracy);
+                    }
+
+                    // 初回起動時のみ現在地に自動ズーム
+                    if (isFirstTime) {
+                        map.flyTo(latLng, 16, { animate: true, duration: 1.5 });
+                        isFirstTime = false;
+                    }
+                },
+                (err) => {
+                    console.warn("位置情報の取得に失敗しました: ", err.message);
+                },
+                {
+                    enableHighAccuracy: true,
+                    maximumAge: 10000,
+                    timeout: 10000
+                }
+            );
+        }
+
+        // 現在地ボタンを押したときの移動
+        function focusCurrentLocation() {
+            if (!currentLocationMarker) {
+                alert("現在地がまだ取得できていません。ブラウザの位置情報権限を許可してください。");
+                return;
+            }
+            const pos = currentLocationMarker.getLatLng();
+            map.flyTo([pos.lat, pos.lng], 16, { animate: true, duration: 1.5 });
+        }
+
+        function updateUI() {
+            markerCluster.clearLayers();
+            const postListEl = document.getElementById('post-list');
+            const adminPostListEl = document.getElementById('admin-post-list');
+            postListEl.innerHTML = '';
+            adminPostListEl.innerHTML = '';
+
+            const sortedPosts = [...posts].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+            sortedPosts.forEach(post => {
+                const timeString = new Date(post.timestamp).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+                
+                const customIcon = L.divIcon({
+                    className: 'custom-div-icon',
+                    html: `<div class="bg-primary w-8 h-8 rounded-full border-2 border-white shadow-lg flex items-center justify-center text-white transform -translate-y-1/2 -translate-x-1/2"><i class="fas fa-comment text-xs"></i></div>`,
+                    iconSize: [32, 32],
+                    iconAnchor: [16, 32],
+                    popupAnchor: [0, -32]
+                });
+
+                const marker = L.marker([post.lat, post.lng], { icon: customIcon });
+                const popupContent = `
+                    <div class="p-1 min-w-[160px]">
+                        <div class="text-[11px] text-gray-400 mb-1 flex items-center"><i class="fas fa-user mr-1 text-primary"></i>${post.username || '名無しさん'}</div>
+                        <div class="text-sm font-bold mb-2 break-words leading-relaxed">${escapeHTML(post.message)}</div>
+                        <div class="text-[10px] text-gray-500 text-right">${timeString}</div>
+                    </div>
+                `;
+                marker.bindPopup(popupContent);
+                markerCluster.addLayer(marker);
+
+                const listItem = document.createElement('div');
+                listItem.className = "bg-dark border border-gray-800/80 p-3.5 rounded-2xl hover:border-primary/50 cursor-pointer transition group";
+                listItem.innerHTML = `
+                    <div class="flex justify-between items-center mb-1.5">
+                        <span class="text-xs font-semibold text-gray-400 group-hover:text-primary transition">${post.username || '名無しさん'}</span>
+                        <span class="text-[10px] text-gray-500">${timeString}</span>
+                    </div>
+                    <p class="text-sm text-gray-200 line-clamp-2 leading-snug">${escapeHTML(post.message)}</p>
+                `;
+                listItem.onclick = () => {
+                    map.flyTo([post.lat, post.lng], 16, { animate: true, duration: 1.5 });
+                    if (window.innerWidth < 768) toggleSidebar();
+                    setTimeout(() => marker.openPopup(), 1500);
+                };
+                postListEl.appendChild(listItem);
+
+                const adminItem = document.createElement('div');
+                adminItem.className = "bg-dark border border-gray-800 p-3.5 rounded-2xl flex justify-between items-center";
+                adminItem.innerHTML = `
+                    <div class="pr-2">
+                        <div class="text-xs text-yellow-500 mb-1">${post.username || '名無しさん'} <span class="text-gray-500 font-normal">(${timeString})</span></div>
+                        <p class="text-sm text-gray-200 leading-snug">${escapeHTML(post.message)}</p>
+                    </div>
+                    <button onclick="deletePost(${post.id})" class="bg-danger/20 hover:bg-danger text-danger hover:text-white p-2.5 rounded-xl text-xs transition flex-shrink-0">
+                        <i class="fas fa-trash-alt"></i>
+                    </button>
+                `;
+                adminPostListEl.appendChild(adminItem);
+            });
+            
+            if(sortedPosts.length === 0) {
+                postListEl.innerHTML = '<p class="text-gray-500 text-xs text-center py-6">投稿がありません</p>';
+                adminPostListEl.innerHTML = '<p class="text-gray-500 text-xs text-center py-6">投稿がありません</p>';
+            }
+        }
+
+        function deletePost(id) {
+            if (confirm("このメッセージを削除しますか？")) {
+                posts = posts.filter(p => p.id !== id);
+                updateUI();
+            }
+        }
+
+        function openPostModal(source) {
+            if (source === 'current') {
+                if (!currentLocationMarker) {
+                    alert("現在地がまだ取得できていません。");
+                    return;
+                }
+                const pos = currentLocationMarker.getLatLng();
+                tempLatLng = { lat: pos.lat, lng: pos.lng };
+                document.getElementById('post-modal').classList.remove('hidden');
+            } else if (source === 'map') {
+                document.getElementById('post-modal').classList.remove('hidden');
+            }
+        }
+
+        function closePostModal() {
+            document.getElementById('post-modal').classList.add('hidden');
+            document.getElementById('post-form').reset();
+            tempLatLng = null;
+        }
+
+        document.getElementById('post-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            if (!tempLatLng) return;
+
+            let lat = tempLatLng.lat;
+            let lng = tempLatLng.lng;
+            const precision = document.getElementById('precision').value;
+            
+            if (precision === 'approximate_1km') {
+                lat += (Math.random() - 0.5) * 0.02; // 約1〜2kmずらす
+                lng += (Math.random() - 0.5) * 0.02;
+            } else if (precision === 'approximate_3km') {
+                lat += (Math.random() - 0.5) * 0.05; // 約3〜5kmずらす
+                lng += (Math.random() - 0.5) * 0.05;
+            }
+
+            const newPost = {
+                id: Date.now(),
+                lat: lat,
+                lng: lng,
+                username: document.getElementById('username').value.trim(),
+                message: document.getElementById('message').value.trim(),
+                timestamp: new Date().toISOString()
+            };
+
+            posts.push(newPost);
+            updateUI();
+            map.flyTo([lat, lng], 15);
+            closePostModal();
+        });
+
+        function openAdminLoginModal() { document.getElementById('admin-login-modal').classList.remove('hidden'); }
+        function closeAdminLoginModal() { document.getElementById('admin-login-modal').classList.add('hidden'); document.getElementById('admin-login-form').reset(); }
+
+        document.getElementById('admin-login-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            if (document.getElementById('admin-password').value === "admin123") {
+                closeAdminLoginModal();
+                document.getElementById('admin-modal').classList.remove('hidden');
+            } else {
+                alert("パスワードが違います");
+            }
+        });
+
+        function closeAdminModal() { document.getElementById('admin-modal').classList.add('hidden'); }
+        function toggleSidebar() { document.getElementById('sidebar').classList.toggle('-translate-x-full'); }
+
+        function escapeHTML(str) {
+            return str.replace(/[&<>'"]/g, tag => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+            }[tag]));
+        }
+    </script>
+</body>
+</html>
